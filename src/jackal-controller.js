@@ -30,6 +30,10 @@ export class JackalController extends videojs.EventTarget {
 
     this._player = player;
     this._tech = tech;
+    this._loader = null;
+
+    this._byteStart = 0;
+
 
     this.requestOptions = {
       maxProviderRetries,
@@ -39,6 +43,12 @@ export class JackalController extends videojs.EventTarget {
     this.mediaSource.addEventListener('error', function(e) {
       console.error('[OCX ERROR] MediaSource Error:', e);
     });
+
+    this._tech.on('seeked', function() {
+      this._byteStart = this._seek(this._tech.currentTime())
+      console.log("Seek completed, current time:", this._tech.currentTime());
+    });
+
 
     this._initFromFileTree(src).then(([DL, AES]) => {
       if (AES) {
@@ -88,8 +98,87 @@ export class JackalController extends videojs.EventTarget {
     }
   }
 
-  async _experimentalPrivateLoading(url, aes) {
+  async _privateLoader(URL, AES) {
+    this._loader = new JackalLoader(this.mediaSource, this._tech, AES)
+    while (true) {
+      // [TODO]: JackalLoader manage/reset buffer
+      if (this._byteStart) this._byteStart = await this._locateChunk(this._byteStart)
+      if (await this._worker(URL, this._byteStart)) return
+    }
+  }
+
+  async _locateChunk(URL, byte) {
+    let start = 0;
+    while (true) {
+      byte += 8
+      const res = (await fetch(URL, { Range: `bytes=${start}-${start+8}` })).text()
+      const len = parseInt(res, 10);
+      if (start + len >= byte) {
+        return start
+      } else {
+        start += len + 8
+      }
+    }
+  }
+
+  async _worker(URL, byteStart) {
     const TIMEOUT_MS = 5000;
+    const REQ_HEADERS = { keepalive: true, Range: `bytes=${byteStart}-` }
+    const REQ_RESPONSE = await fetch(URL, REQ_HEADERS)
+    
+    // Handle data request response
+    if (REQ_RESPONSE.status !== 200) {
+      throw new Error(`Status Message: ${REQ_RESPONSE.statusText}`)
+    } else if (REQ_RESPONSE.body === null || REQ_RESPONSE.headers.get('Content-Length') <= 8) {
+      throw new Error(`Empty response body`)
+    } else {
+      const reader = REQ_RESPONSE.body.getReader()
+
+      let receivedLength = 0
+      this._loader.setTotalBytes(Number(r.headers.get("content-length")))
+
+      while (true) {
+        const {done, value} = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Timeout')), TIMEOUT_MS);
+          reader.read().then(({ done, value }) => {
+            clearTimeout(timeout);
+            resolve({ done, value });
+          }).catch(reject);
+        });
+
+        if (done) {
+          return 1;
+        }
+        if (byteStart !== this._byteStart) {
+          return 0;
+        }
+
+        await this._loader.loadBytes(value)
+        receivedLength += value.length
+      }
+      //loader.mp4file.flush();
+      //await new Promise(r => setTimeout(r, 5000));
+      return;
+    }
+    
+  }
+
+  async _seek(timeInSeconds) {
+    // Find the byte range for the desired time using MP4Box's sample table
+    const track = this._loader.mp4file.moov.traks[0]; // Assume the first track
+    const timeScale = track.mdia.mdhd.timescale;
+    const desiredTime = Math.floor(timeInSeconds * timeScale);
+
+    const sample = track.samples.find(s => s.start_time >= desiredTime);
+    if (!sample) {
+        console.error("Time out of range!");
+        return;
+    }
+
+    return track.samples[sampleIndex].data_offset
+  }
+
+  async _experimentalPrivateLoading(url, aes) {
     const r = await fetch(url, {method: 'GET', keepalive: true})
     const byteLength = r.headers.get('Content-Length')
     if (r.status !== 200) {
