@@ -1,14 +1,30 @@
 {
-  "name": "oculux",
+  "name": "@oculux/video-plugin",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.1",
   "main": "dist/videojs-oculux.cjs.js",
-  "module": "dist/videojs-oculux.es.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:js": "rollup -c scripts/rollup.config.js",
     "preview": "vite preview"
   },
+  "vjsstandard": {
+    "ignore": [
+      "dist",
+      "docs",
+      "deploy",
+      "test/dist",
+      "utils",
+      "src/*.worker.js"
+    ]
+  },
+  "files": [
+    "dist/",
+    "index.html",
+    "scripts/",
+    "src/"
+  ],
   "dependencies": {
     "@cosmjs/proto-signing": "^0.32.3",
     "@cosmjs/stargate": "^0.32.4",

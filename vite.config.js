@@ -9,8 +9,12 @@ export default defineConfig({
     nodePolyfills({ include: ['crypto', 'util', 'stream'] })
   ],
   resolve: {
-    preserveSymlinks: true,
+    preserveSymlinks: false,
     alias: [
+      {
+        find: 'video.js',
+        replacement: resolve(__dirname, 'node_modules', 'video.js')  // ensure all imports resolve to the same instance
+      },
       {
         find: "@",
         replacement: resolve(__dirname, "./src"),
@@ -38,11 +42,11 @@ export default defineConfig({
     lib: {
       entry: resolve(__dirname, "src/videojs-oculux.js"),
       fileName: (format) => `videojs-oculux.${format}.js`,
-      formats: ['iife'],
+      formats: ['iife', 'cjs', 'es'],
       name: 'oculux'
     },
     rollupOptions: {
-      external: [],
+      external: ['video.js'],
       output: {
         globals: {
           '@cosmjs/stargate': 'stargate',
@@ -52,6 +56,7 @@ export default defineConfig({
           'browserify-des': 'browserifyDes',
           'browserify-sign': 'browserifySign',
           'browserify-aes': 'browserifyAes',
+          'video.js': 'videojs'
         }
       },
       plugins: [

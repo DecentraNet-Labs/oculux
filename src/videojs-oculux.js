@@ -6,8 +6,9 @@
  */
 import document from 'global/document';
 import xhrFactory from './xhr.js';
-//import videojs from 'video.js';
-const videojs = window.videojs;
+import videojs from 'video.js';
+//const videojs = videojs.default || videojs;
+//const videojs = window.videojs;
 import { JackalController } from './jackal-controller.js';
 import Config from './config.js';
 import reloadSourceOnError from './reload-source-on-error.js';
@@ -367,7 +368,7 @@ const OculuxSourceHandler = {
 };
 
 console.log('[OCX] Registering Oculux source handler...');
-videojs.getTech('Html5').registerSourceHandler(OculuxSourceHandler, 1);
+videojs.getTech('Html5').registerSourceHandler(OculuxSourceHandler, 0);
 console.log('[OCX] Oculux source handler registered!');
 videojs.OculuxHandler = OculuxHandler;
 videojs.OculuxSourceHandler = OculuxSourceHandler;

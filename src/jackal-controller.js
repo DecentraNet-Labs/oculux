@@ -79,7 +79,8 @@ export class JackalController extends videojs.EventTarget {
       const { providerIps } = await jklQuery.queries.storage.findFile({
         merkle: ft.merkleRoot,
       })
-      const url = `${providerIps[0]}/download/${ft.merkleHex}`
+      //const url = `${providerIps[0]}/download/${ft.merkleHex}`
+      
 
       return [url, security ? await this._reader.extractViewAccess(rawfile) : null]
     } catch (e) {
