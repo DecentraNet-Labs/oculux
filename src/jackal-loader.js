@@ -17,40 +17,16 @@ export class JackalLoader {
     this._staged = []
     this._processed = 0;
     this._totalLength = 0;
-    
+
+    this._trackMap = {};
     this._fileStart = 0;
 
     this.buffer = new Uint8Array(0);
     this.decoder = new TextDecoder('utf-8');
 
-    // Create an mp4box file instance
-    this.mp4file = MP4Box.createFile();
-    this.mp4file.onReady = (info) => {
-        console.log("MP4 parsed. Movie info:", info);
-
-        var mime = 'video/mp4; codecs="';
-        for (var i = 0; i < info.tracks.length; i++) {
-            mime += info.tracks[i].codec;
-            if (i < info.tracks.length - 1) mime += ', ';
-        }
-        mime += '"';
-        this.mime = mime
-
-        this._initMSE()
-
-        const track_id = info.tracks[0].id;
-        this.mp4file.setSegmentOptions(track_id, null, { nbSamples: 1000 });
-        // You can start requesting fMP4 fragments here if you want
-    };
-
-    this.mp4file.onSegment = async (id, user, buffer) => {
-        console.log("Generated fMP4 segment for track", id);
-        this._segmentCount++
-        this._sourcebuffer.appendBuffer(buffer)
-        // Do something with the fMP4 buffer (e.g., append to SourceBuffer)
-    };
+    this.reset()
     this.mp4file.onError = (e) => console.error("Error:", e);
-    this.mp4file.onSidx = this.onSidx.bind(this)
+    //this.mp4file.onSidx = this.onSidx.bind(this)
   }
 
   async feedData(arrayBuffer) {
@@ -65,33 +41,114 @@ export class JackalLoader {
     arrayBuffer.fileStart = this._fileStart;  // Set the byte position of the chunk
     console.debug(`[OCX DEBUG] <appendToMp4box> Filestart: ${this._fileStart}; Buffer`, arrayBuffer)
     // TODO: check if moov exists first... i.e.
-
-    if (!this._dash) {
-      if (!this._segmentCount) {
-        this._staged.push(arrayBuffer)
-      }
-      this.mp4file.appendBuffer(arrayBuffer);  // Append the chunk to mp4box
-    } else {
-      await this.sendToPlayback(arrayBuffer);
-    }
+    this.mp4file.appendBuffer(arrayBuffer);
   }
 
   setTotalBytes(length) {
     this._totalLength = length
   }
 
+  reset(startByte = 0) {
+    this._staged = []
+    this._processed = 0
+    this.buffer = new Uint8Array(0)
+    this._segmentCount = 0
+    this._dash = false
+
+    this.mp4file = MP4Box.createFile();
+    this.mp4file.onReady = (info) => {
+        console.log("[OCX INFO] MP4 MOOV Parsed:", info);
+        if (!info.tracks.length) throw new Error("No tracks found");
+        var segOptions = { nbSamples: 10, rapAlign: true };
+        //var mime = 'video/mp4; codecs="';
+
+        for (var i = 0; i < info.tracks.length; i++) {
+          console.debug("[OCX DEBUG] Segmenting track "+info.tracks[i].id+" with "+segOptions.nbSamples+" per segment");
+          this.mp4file.setSegmentOptions(info.tracks[i].id, segOptions);
+          //mime += info.tracks[i].codec;
+          //if (i < info.tracks.length - 1) mime += ', ';
+        }
+        //this.mime = mime + '"';
+        const segs = this.mp4file.initializeSegmentation()
+        console.debug('[OCX DEBUG] Segmentation initialized!')
+        console.debug('Initial Segments:', segs)
+
+        info.tracks.forEach(track => {
+          // Example: track.codec might be "avc1.4d401e" (video) or "mp4a.40.2" (audio)
+          // For video track: 'video/mp4; codecs="avc1.4d401e"'
+          // For audio track: 'audio/mp4; codecs="mp4a.40.2"'
+          // Actually, for MSE, you can still use 'video/mp4' MIME type for both as long as codecs match the track type.
+          // It's common to use 'video/mp4' for both but must be careful. If you have separate buffers, it's typical:
+          // video buffer: 'video/mp4; codecs="..."'
+          // audio buffer: 'audio/mp4; codecs="..."'
+          
+          let mime;
+          if (track.type === 'video') {
+              mime = 'video/mp4; codecs="' + track.codec + '"';
+          } else if (track.type === 'audio') {
+              mime = 'audio/mp4; codecs="' + track.codec + '"';
+          } else {
+              // You might skip other track types (like subtitles) for this example
+              return;
+          }
+  
+          // Create SourceBuffer for this track
+          const sb = this._mediaSource.addSourceBuffer(mime)
+          this._trackMap[track.id] = { buffer: sb, mime: mime };
+  
+          // Listen to updateend event to manage queueing
+          //sb.addEventListener('updateend', () => this._handleBufferUpdateEnd(track.id));
+        });
+        console.debug('[OCX DEBUG] Source buffers initialized!')
+        console.debug('Source Buffers:', this._trackMap)
+        console.debug('[OCX DEBUG] Injecting initial segments...')
+        segs.forEach(async (seg) => {
+          const trackInfo = this._trackMap[seg.id];
+          await this._appendBuffer(trackInfo.buffer, seg.buffer)
+        });
+        
+        //console.log('MIME Type:', this.mime)
+        //this._initMSE()
+        /*segs.forEach(async (segment) => {
+          await this._appendBuffer(segment.buffer);
+        });*/
+        this.mp4file.seek(0, true);
+        this.mp4file.start();
+    };
+
+    this.mp4file.onSegment = (id, user, arrayBuffer, sampleNum) => {
+      console.log("New segment created for track "+id+", up to sample "+sampleNum);
+      /*console.log(this.mp4file)
+
+      this._sourcebuffer.appendBuffer(seg.buffer)*/
+
+      const trackInfo = this._trackMap[id];
+      if (!trackInfo) {
+          console.warn(`No SourceBuffer found for track ${id}`);
+          return;
+      }
+      this._appendBuffer(trackInfo.buffer, arrayBuffer)
+      //this._appendBuffer(arrayBuffer);
+      //out.write(toBuffer(arrayBuffer));
+    }
+
+    this._fileStart = startByte;
+  }
+
   _initMSE() {
-    console.debug('[OCX DEBUG] Adding Source Buffer!')
+    console.debug('[OCX DEBUG] Adding Source Buffer...')
     this._sourcebuffer = this._mediaSource.addSourceBuffer(this.mime)
     this._sourcebuffer.addEventListener('updateend', () => {
       if (this._processed === this._totalLength) {
-          this._mediaSource.endOfStream();
+          //this._mediaSource.endOfStream();
       }
     });
-    for (const buf of this._staged) {
+    console.debug('[OCX DEBUG] Source buffer created!')
+    /*for (const buf of this._staged) {
       console.log("destaging")
       this.sendToPlayback(buf)
-    }
+    }*/
+    this._staged = []
   }
 
   // 
@@ -103,12 +160,6 @@ export class JackalLoader {
     this.buffer = tempBuffer;
   
     await this.processBuffer();
-    if (!this._dash && !this._segmentCount && this._processed === this._totalLength) {
-      console.log(`[OCX INFO] Video could not be streamed or fragmented.`)
-      const videoBlob = new File(this._staged, 'video.mp4')
-      const src = URL.createObjectURL(videoBlob)
-      this._tech.src(src);
-    }
     return
   }
 
@@ -150,6 +201,22 @@ export class JackalLoader {
     this._sourcebuffer.appendBuffer(arrayBuffer);
   }
 
+  async _appendBuffer(sb, buffer) {
+    console.debug('[OCX DEBUG] Appending buffer...')
+    while (true) {
+      if (sb && !sb.updating) {
+          sb.appendBuffer(buffer);
+          console.log('[OCX INFO] Buffer appended');
+          return;
+      } else {
+          console.debug('[OCX DEBUG] Waiting for buffer mutex...')
+          // Queue the data if the SourceBuffer is updating
+          //setTimeout(() => this._appendBuffer(buffer), 50);
+          await new Promise(r => setTimeout(r, 100));
+      }
+    }
+  };
+
   async aesCrypt(data) {
     console.log(this._aes)
     console.log(data, data.length)
@@ -179,25 +246,6 @@ export class JackalLoader {
     })
     return new Blob([decryptedData])
   }
-
-  async onSidx(sidx) {
-    this._dash = true;
-    var totalDuration = 0;
-    sidx.references.forEach(function(ref) {
-        totalDuration += ref.subsegment_duration / sidx.timescale;
-    });
-
-    while (!this._sourcebuffer || this._sourcebuffer.updating) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-
-    if (totalDuration > 0) {
-        console.log('Calculated total duration from sidx:', totalDuration);
-        this._mediaSource.duration = totalDuration;
-    } else {
-        console.warn('Unable to calculate duration from sidx.');
-    }
-  };
 
   onUpdateEnd() {
     console.debug(`[OCX DEBUG] <onUpdateEnd> MS Ready State: ${this._mediaSource.readyState}`)

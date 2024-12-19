@@ -26,7 +26,7 @@ export class JackalController extends videojs.EventTarget {
       maxProviderRetries = Infinity;
     }
 
-    this.mediaSource = new MediaSource();
+    this.mediaSource = null
 
     this._player = player;
     this._tech = tech;
@@ -40,30 +40,39 @@ export class JackalController extends videojs.EventTarget {
       timeout: null
     };
 
-    this.mediaSource.addEventListener('error', function(e) {
-      console.error('[OCX ERROR] MediaSource Error:', e);
-    });
-
     this._tech.on('seeked', function() {
-      this._byteStart = this._seek(this._tech.currentTime())
+      //this._byteStart = this._seek(this._tech.currentTime())
       console.log("Seek completed, current time:", this._tech.currentTime());
     });
 
 
     this._initFromFileTree(src).then(([DL, AES]) => {
+      this.mediaSource = new MediaSource();
+      this.mediaSource.addEventListener('sourceopen', () => {
+          this._privateLoader(DL, AES)
+      })
+      this.mediaSource.addEventListener('error', function(e) {
+        console.error('[OCX ERROR] MediaSource Error:', e);
+      });  
       if (AES) {
         this._tech.src(URL.createObjectURL(this.mediaSource));
-        this._experimentalPrivateLoading(DL, AES)
       } else {
         this._tech.src(DL)
       }
     })
-
     //// Public Media
     // [TODO] (fn) get providers for the file
     // [TODO] setup provider selector plugin
     // [TODO] setup provider change listeners
     // [TODO] set src & play
+    this._tech.on('play', () => {
+      console.log('[OCX INFO] Play event triggered');
+  
+      /*if (!this._tech.mediaSource || this._tech.mediaSource.readyState !== 'open') {
+          console.log('[OCX INFO] MediaSource not ready, delaying playback...');
+          this._tech.pause(); // Prevent playback until MediaSource is ready
+      }*/
+    });
   }
 
   async _initFromFileTree(src) {
@@ -89,7 +98,7 @@ export class JackalController extends videojs.EventTarget {
       const { providerIps } = await jklQuery.queries.storage.findFile({
         merkle: ft.merkleRoot,
       })
-      //const url = `${providerIps[0]}/download/${ft.merkleHex}`
+      const url = `${providerIps[0]}/download/${ft.merkleHex}`
       
 
       return [url, security ? await this._reader.extractViewAccess(rawfile) : null]
@@ -135,7 +144,7 @@ export class JackalController extends videojs.EventTarget {
       const reader = REQ_RESPONSE.body.getReader()
 
       let receivedLength = 0
-      this._loader.setTotalBytes(Number(r.headers.get("content-length")))
+      this._loader.setTotalBytes(Number(REQ_RESPONSE.headers.get("content-length")))
 
       while (true) {
         const {done, value} = await new Promise((resolve, reject) => {
@@ -147,7 +156,7 @@ export class JackalController extends videojs.EventTarget {
         });
 
         if (done) {
-          return 1;
+          break
         }
         if (byteStart !== this._byteStart) {
           return 0;
@@ -156,9 +165,9 @@ export class JackalController extends videojs.EventTarget {
         await this._loader.loadBytes(value)
         receivedLength += value.length
       }
-      //loader.mp4file.flush();
+      //this._loader.mp4file.flush();
       //await new Promise(r => setTimeout(r, 5000));
-      return;
+      return 1;
     }
     
   }
@@ -209,7 +218,7 @@ export class JackalController extends videojs.EventTarget {
         await loader.loadBytes(value)
         receivedLength += value.length
       }
-      loader.mp4file.flush();
+      this._loader.mp4file.flush();
       await new Promise(r => setTimeout(r, 5000));
       return;
     }
