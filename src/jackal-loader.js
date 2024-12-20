@@ -93,47 +93,53 @@ export class JackalLoader {
   
           // Create SourceBuffer for this track
           const sb = this._mediaSource.addSourceBuffer(mime)
-          this._trackMap[track.id] = { buffer: sb, mime: mime };
+          this._trackMap[track.id] = { buffer: sb, queue: [], appending: false, mime: mime };
   
           // Listen to updateend event to manage queueing
-          //sb.addEventListener('updateend', () => this._handleBufferUpdateEnd(track.id));
+          sb.addEventListener('updateend', () => this._handleBufferUpdateEnd(track.id));
         });
+
         console.debug('[OCX DEBUG] Source buffers initialized!')
         console.debug('Source Buffers:', this._trackMap)
         const totalDuration = info.duration / info.timescale;
         this._mediaSource.duration = totalDuration;
-        console.log(totalDuration)
+
         console.debug('[OCX DEBUG] Injecting initial segments...')
-        segs.forEach(async (seg) => {
+        segs.forEach(seg => {
           const trackInfo = this._trackMap[seg.id];
-          await this._appendBuffer(trackInfo.buffer, seg.buffer)
+          if (trackInfo) {
+              trackInfo.queue.push(seg.buffer);
+              this._appendBuffer(seg.id);
+          }
         });
-        //console.log('MIME Type:', this.mime)
         //this._initMSE()
-        /*segs.forEach(async (segment) => {
-          await this._appendBuffer(segment.buffer);
-        });*/
         this.mp4file.seek(0, true);
         this.mp4file.start();
     };
 
     this.mp4file.onSegment = (id, user, arrayBuffer, sampleNum) => {
       console.log("New segment created for track "+id+", up to sample "+sampleNum);
-      /*console.log(this.mp4file)
-
-      this._sourcebuffer.appendBuffer(seg.buffer)*/
 
       const trackInfo = this._trackMap[id];
       if (!trackInfo) {
           console.warn(`No SourceBuffer found for track ${id}`);
           return;
       }
-      this._appendBuffer(trackInfo.buffer, arrayBuffer)
-      //this._appendBuffer(arrayBuffer);
-      //out.write(toBuffer(arrayBuffer));
+
+      // Queue the segment and append when ready
+      trackInfo.queue.push(arrayBuffer);
+      this._appendBuffer(id);
     }
 
     this._fileStart = startByte;
+  }
+
+  _handleBufferUpdateEnd(trackId) {
+    // [TODO]: error management
+    const trackInfo = this._trackMap[trackId];
+    if (!trackInfo) return;     
+    trackInfo.appending = false;
+    this._appendBuffer(trackId);
   }
 
   _initMSE() {
@@ -145,10 +151,6 @@ export class JackalLoader {
       }
     });
     console.debug('[OCX DEBUG] Source buffer created!')
-    /*for (const buf of this._staged) {
-      console.log("destaging")
-      this.sendToPlayback(buf)
-    }*/
     this._staged = []
   }
 
@@ -193,28 +195,15 @@ export class JackalLoader {
     return
   }
 
-  async sendToPlayback(arrayBuffer) {
-    console.debug(`[OCX DEBUG] <sendToPlayback> MS State: ${this._mediaSource.readyState}; SB State: ${this._sourcebuffer.updating};`)
-    // Wait for sourceBuffer to be ready and not updating
-    while (!this._sourcebuffer || this._sourcebuffer.updating) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    this._sourcebuffer.appendBuffer(arrayBuffer);
-  }
-
-  async _appendBuffer(sb, buffer) {
+  _appendBuffer(trackId) {
+    // [TODO] error management
     console.debug('[OCX DEBUG] Appending buffer...')
-    while (true) {
-      if (sb && !sb.updating) {
-          sb.appendBuffer(buffer);
-          console.log('[OCX INFO] Buffer appended');
-          return;
-      } else {
-          console.debug('[OCX DEBUG] Waiting for buffer mutex...')
-          // Queue the data if the SourceBuffer is updating
-          //setTimeout(() => this._appendBuffer(buffer), 50);
-          await new Promise(r => setTimeout(r, 100));
-      }
+    const trackInfo = this._trackMap[trackId];
+    if (!trackInfo) return;
+    if (!trackInfo.appending && trackInfo.queue.length > 0 && !trackInfo.buffer.updating) {
+        trackInfo.appending = true;
+        const segment = trackInfo.queue.shift();
+        trackInfo.buffer.appendBuffer(segment);
     }
   };
 
