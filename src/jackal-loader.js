@@ -60,7 +60,6 @@ export class JackalLoader {
         console.log("[OCX INFO] MP4 MOOV Parsed:", info);
         if (!info.tracks.length) throw new Error("No tracks found");
         var segOptions = { nbSamples: 10, rapAlign: true };
-        //var mime = 'video/mp4; codecs="';
 
         for (var i = 0; i < info.tracks.length; i++) {
           console.debug("[OCX DEBUG] Segmenting track "+info.tracks[i].id+" with "+segOptions.nbSamples+" per segment");
@@ -101,12 +100,14 @@ export class JackalLoader {
         });
         console.debug('[OCX DEBUG] Source buffers initialized!')
         console.debug('Source Buffers:', this._trackMap)
+        const totalDuration = info.duration / info.timescale;
+        this._mediaSource.duration = totalDuration;
+        console.log(totalDuration)
         console.debug('[OCX DEBUG] Injecting initial segments...')
         segs.forEach(async (seg) => {
           const trackInfo = this._trackMap[seg.id];
           await this._appendBuffer(trackInfo.buffer, seg.buffer)
         });
-        
         //console.log('MIME Type:', this.mime)
         //this._initMSE()
         /*segs.forEach(async (segment) => {
