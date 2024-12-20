@@ -40,9 +40,10 @@ export class JackalController extends videojs.EventTarget {
       timeout: null
     };
 
-    this._tech.on('seeked', function() {
-      //this._byteStart = this._seek(this._tech.currentTime())
-      console.log("Seek completed, current time:", this._tech.currentTime());
+    this._player.on('seeked', () => {
+      this._byteStart = this._seek(this._player.currentTime())
+      console.log("Seek completed, current time:", this._player.currentTime());
+      console.log("Byte start:", this._byteStart);
     });
 
 
@@ -111,7 +112,7 @@ export class JackalController extends videojs.EventTarget {
     this._loader = new JackalLoader(this.mediaSource, this._tech, AES)
     while (true) {
       // [TODO]: JackalLoader manage/reset buffer
-      if (this._byteStart) this._byteStart = await this._locateChunk(this._byteStart)
+      if (this._byteStart) this._byteStart = await this._locateChunk(URL, this._byteStart)
       if (await this._worker(URL, this._byteStart)) return
     }
   }
@@ -174,7 +175,7 @@ export class JackalController extends videojs.EventTarget {
 
   async _seek(timeInSeconds) {
     // Find the byte range for the desired time using MP4Box's sample table
-    const track = this._loader.mp4file.moov.traks[0]; // Assume the first track
+    /*const track = this._loader.mp4file.moov.traks[0];
     const timeScale = track.mdia.mdhd.timescale;
     const desiredTime = Math.floor(timeInSeconds * timeScale);
 
@@ -182,9 +183,9 @@ export class JackalController extends videojs.EventTarget {
     if (!sample) {
         console.error("Time out of range!");
         return;
-    }
-
-    return track.samples[sampleIndex].data_offset
+    }*/
+    const range = this._loader.mp4file.seek(timeInSeconds);
+    return range.offset
   }
 
   async _experimentalPrivateLoading(url, aes) {
